@@ -1,125 +1,414 @@
+import 'dart:isolate';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:life/bridge.dart';
+import 'package:life/life.dart';
+import 'package:life/life_app_state.dart';
+import 'package:logger/logger.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+const Color darkBlue = Color.fromARGB(255, 18, 32, 47);
 
 void main() {
-  runApp(const MyApp());
+  final log = Logger();
+  final Key lifeAppWidgetKey = GlobalKey();
+  LifeAppWidget lifeAppWidget = LifeAppWidget(key: lifeAppWidgetKey);
+  runApp(lifeAppWidget);
+
+  log.i("main() finished");
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// ignore: must_be_immutable
+class LifeAppWidget extends StatelessWidget {
+  static final log = Logger();
+  LifeGridPainter? lifeGridPainter;
+  GestureDetector? gestureDetector;
+  GridWidgetState? gridWidgetState;
+  List<List<bool>>? canvasCells;
+
+  final GlobalKey lifeAppWidgetKey = GlobalKey();
+  final GlobalKey gestureDetectorKey = GlobalKey();
+
+  LifeAppWidget({required Key key}) : super(key: key) {
+    lifeGridPainter = LifeGridPainter();
+    gestureDetector = GestureDetector(
+        key: gestureDetectorKey,
+        onDoubleTapDown: (details) {
+          log.i(details.localPosition);
+
+          if (null == rowCount || null == columnCount) {
+            return;
+          } else {
+            canvasCells ??= initAsLifeless();
+          }
+
+          gridWidgetState!.update(canvasCells!);
+          log.i(gestureDetectorKey.currentContext!.size);
+
+          // gestureDetector.child.
+          int col = details.localPosition.dx.round();
+          int row = details.localPosition.dy.round();
+
+          var rec = localPositionToCellID(
+              details.localPosition, gestureDetectorKey.currentContext!.size);
+
+          gridWidgetState!.updateCell(rec.$1, rec.$2);
+        },
+        child: CustomPaint(painter: lifeGridPainter));
+    gridWidgetState = GridWidgetState(lifeGridPainter!, gestureDetector!);
+    gw = GridWidget(
+        key: UniqueKey(),
+        gridWidgetState: gridWidgetState,
+        gestureDetector: gestureDetector!);
+  }
+
+  (int, int) localPositionToCellID(Offset offset, Size? canvasSize) {
+    double renderedXSize = 25.0 * columnCount!;
+    double renderedYSize = 25.0 * rowCount!;
+    double xStart = (canvasSize!.width - renderedXSize) / 2;
+    double yStart = (canvasSize.height - renderedYSize) / 2;
+    int col = ((offset.dy - yStart) / 25).floor();
+    int row = ((offset.dx - xStart) / 25).floor();
+
+    return (row, col);
+  }
+
+  List<List<bool>> initAsLifeless() {
+    List<List<bool>> newCells = List.empty(growable: true);
+    for (int i = 0; i < columnCount!; i++) {
+      newCells.add(List.empty(growable: true));
+      for (int j = 0; j < rowCount!; j++) {
+        newCells[i].add(false);
+      }
+    }
+    return newCells;
+  }
+
+  Bridge<Life>? lifeInterface;
+
+  CustomPaint? cp;
+  GridWidget? gw;
+  int messageCount = 0;
+  bool isRunning = false;
+
+  int? rowCount;
+  int? columnCount;
+
+  int? generateMilliSec;
+
+  LifeAppState laState = LifeAppState();
+  ReceivePort lifeReceivePort = ReceivePort();
+  late SendPort lifeSendPort;
+  late GestureDetector gd;
+
+  bool? withRandomCells;
+
+  void newCellsgenerated(List<List<bool>> cells) {
+    gw!.gridWidgetState!.update(cells);
+  }
+
+  Widget buildMaterialApp() {
+    return MaterialApp(
+      theme: ThemeData.dark().copyWith(scaffoldBackgroundColor: darkBlue),
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('Life'),
+        ),
+        body: Container(
+            color: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
+            child: Column(
+              children: <Widget>[
+                Expanded(
+                    child: LayoutBuilder(
+                  builder: (_, constraints) => Container(
+                      width: constraints.widthConstraints().maxWidth,
+                      height: constraints.heightConstraints().maxHeight,
+                      color: const Color.fromARGB(255, 218, 238, 195),
+                      child: gw),
+                )),
+                SizedBox(
+                    height: 150,
+                    //  width: 600 ,
+                    child: GridView.count(
+                        physics: const NeverScrollableScrollPhysics(),
+                        shrinkWrap: false,
+                        primary: true,
+                        childAspectRatio: 4,
+                        padding: const EdgeInsets.all(2),
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 5,
+                        crossAxisCount: 6,
+                        children: <Widget>[
+                          TextField(
+                              style: const TextStyle(color: Colors.black),
+                              decoration: const InputDecoration(
+                                  labelText: "Enter rows"),
+                              keyboardType: TextInputType.number,
+                              inputFormatters: <TextInputFormatter>[
+                                FilteringTextInputFormatter.digitsOnly
+                              ],
+                              onChanged: (value) {
+                                laState.rowSet = true;
+                                rowCount = int.parse(value);
+                                
+                              }),
+                          TextField(
+                              style: const TextStyle(color: Colors.black),
+                              decoration: const InputDecoration(
+                                  labelText: "Enter columns"),
+                              keyboardType: TextInputType.number,
+                              inputFormatters: <TextInputFormatter>[
+                                FilteringTextInputFormatter.digitsOnly
+                              ],
+                              onChanged: (value) {
+                                laState.columnSet = true;
+                                columnCount = int.parse(value);
+                              }),
+                          TextField(
+                              style: const TextStyle(color: Colors.black),
+                              decoration: const InputDecoration(
+                                  labelText: "Enter delay in millisec"),
+                              keyboardType: TextInputType.number,
+                              inputFormatters: <TextInputFormatter>[
+                                FilteringTextInputFormatter.digitsOnly
+                              ],
+                              onChanged: (value) {
+                                laState.genTimeSet = true;
+                                generateMilliSec = int.parse(value);
+                              }),
+                          SizedBox(
+                              width: 75,
+                              height: 50,
+                              child: ElevatedButton(
+                                style: style,
+                                onPressed: () {
+                                  if (laState.canStart()) {
+                                    laState.isRunning = true;
+                                    withRandomCells = true;
+                                    lifeInterface = Bridge.fromList(
+                                        Life.withList,
+                                        [
+                                          columnCount,
+                                          rowCount,
+                                          generateMilliSec
+                                        ],
+                                        newCellsgenerated,
+                                        kIsWeb ? false : true);
+                                    lifeInterface!
+                                        .callDelegateFromList(["start"]);
+                                  }
+                                },
+                                child: const Text('Start Random'),
+                              )),
+                          SizedBox(
+                              width: 75,
+                              height: 50,
+                              child: ElevatedButton(
+                                style: style,
+                                onPressed: () {
+                                  if (laState.canStart()) {
+                                    if (null == lifeInterface) {
+                                      withRandomCells = false;
+                                      lifeInterface = Bridge.fromList(
+                                          Life.withList,
+                                          [
+                                            lifeGridPainter!.receivedCells,
+                                            generateMilliSec
+                                          ],
+                                          newCellsgenerated,
+                                          kIsWeb ? false : true);
+                                      lifeInterface!
+                                          .callDelegateFromList(["start"]);
+                                      laState.isRunning = true;
+                                    } else {
+                                      lifeInterface!
+                                          .callDelegateFromList(["start"]);
+                                      laState.isRunning = true;
+                                    }
+                                  }
+                                },
+                                child: const Text('Start'),
+                              )),
+                          SizedBox(
+                              width: 75,
+                              height: 50,
+                              child: ElevatedButton(
+                                style: style,
+                                onPressed: () {
+                                  if (laState.isRunning) {
+                                    laState.isRunning = false;
+                                    lifeInterface!
+                                        .callDelegateFromList(["stop"]);
+                                  }
+                                },
+                                child: const Text('Stop'),
+                              )),
+                        ]))
+              ],
+            )),
+      ),
+    );
+  }
+
+  final ButtonStyle style = ElevatedButton.styleFrom(
+      textStyle: const TextStyle(fontSize: 10),
+      shape: const LinearBorder(
+        side: BorderSide(color: Colors.blue),
+        bottom: LinearBorderEdge(),
+      ),
+      fixedSize: const Size(60, 25));
 
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
+    gd = GestureDetector(
+        onDoubleTapDown: (details) {
+          log.d(details.localPosition);
+        },
+        child: CustomPaint(painter: lifeGridPainter));
+
+    final ButtonStyle style = ElevatedButton.styleFrom(
+        textStyle: const TextStyle(fontSize: 10),
+        shape: const LinearBorder(
+          side: BorderSide(color: Colors.blue),
+          bottom: LinearBorderEdge(),
+        ),
+        fixedSize: const Size(60, 25));
+
+    return buildMaterialApp();
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+class GridWidget extends StatefulWidget {
+  GridWidget(
+      {required Key key,
+      required this.gridWidgetState,
+      required this.gestureDetector})
+      : super(key: key);
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  GridWidgetState? gridWidgetState;
+  GestureDetector gestureDetector;
+  final log = Logger();
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  // ignore: no_logic_in_create_state
+  State<StatefulWidget> createState() {
+    log.i("createState called");
+    return gridWidgetState!;
+  }
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class GridWidgetState extends State<StatefulWidget> {
+  final log = Logger();
+  LifeGridPainter lifeGridPainter;
+  GestureDetector gd;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  GridWidgetState(this.lifeGridPainter, this.gd);
+
+  void update(List<List<bool>> newCells) {
+    lifeGridPainter.receivedCells = newCells;
+
+    log.i("update called");
+    lifeGridPainter.notifyListeners();
+  }
+
+  void updateCell(int i, int j) {
+    log.d("updateCell called");
+    if (i < 0 || i >= lifeGridPainter.receivedCells!.length) {
+      return;
+    }
+    if (j < 0 || j >= lifeGridPainter.receivedCells![0].length) {
+      return;
+    }
+    lifeGridPainter.receivedCells![i][j] =
+        !lifeGridPainter.receivedCells![i][j];
+
+    log.d("updateCell called");
+    lifeGridPainter.notifyListeners();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
-    );
+    return gd;
+  }
+}
+
+class LifeGridPainter extends ChangeNotifier implements CustomPainter {
+   final log = Logger();
+  LifeGridPainter() {
+    receivedCells = List.empty(growable: true);
+  }
+
+  late List<List<bool>>? receivedCells;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    log.d("Calling paint ");
+    // Define a paint object
+    final paint = Paint()
+      ..style = PaintingStyle.fill
+      ..strokeWidth = 4.0
+      ..color = Colors.indigo;
+
+    final paintDead = Paint()
+      ..style = PaintingStyle.fill
+      ..strokeWidth = 4.0
+      ..color = Colors.black26;
+
+    const double rSize = 25.0;
+
+    if (receivedCells == null || receivedCells!.isEmpty) {
+      return;
+    }
+
+    int m = receivedCells!.length;
+    int n = receivedCells![0].length;
+
+    double xStart = (size.width - rSize * m) / 2;
+    double yStart = (size.height - rSize * n) / 2;
+
+    for (int i = 0; i < m; i++) {
+      for (int j = 0; j < n; j++) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromLTWH(
+                  xStart + (rSize * i), yStart + (rSize * j), rSize, rSize),
+              const Radius.circular(3)),
+          getCellValue(receivedCells, i, j) ? paint : paintDead,
+        );
+      }
+    }
+  }
+
+  bool getCellValue(List<List<bool>>? inCells, int i, int j) {
+    if (inCells == null) {
+      log.d("null cells");
+      return false;
+    }
+    return inCells[i][j];
+  }
+
+  @override
+  bool shouldRepaint(LifeGridPainter oldDelegate) => true;
+
+  @override
+  bool get hasListeners => true;
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+  }
+
+  @override
+  bool? hitTest(Offset position) => true;
+
+  @override
+  SemanticsBuilderCallback? get semanticsBuilder => null;
+
+  @override
+  bool shouldRebuildSemantics(covariant CustomPainter oldDelegate) {
+    return true;
   }
 }
