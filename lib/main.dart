@@ -1,21 +1,32 @@
 import 'dart:isolate';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:life/bridge.dart';
 import 'package:life/life.dart';
 import 'package:life/life_app_state.dart';
 import 'package:logger/logger.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_spinbox/material.dart';
 
 const Color darkBlue = Color.fromARGB(255, 18, 32, 47);
 
 void main() {
   final log = Logger();
-  final Key lifeAppWidgetKey = GlobalKey();
-  LifeAppWidget lifeAppWidget = LifeAppWidget(key: lifeAppWidgetKey);
-  runApp(lifeAppWidget);
-
+  runApp(new MyApp());
   log.i("main() finished");
+}
+
+class MyApp extends StatelessWidget {
+  final log = Logger();
+  final Key lifeAppWidgetKey = GlobalKey();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: "Life",
+      home: LifeAppWidget(key: lifeAppWidgetKey),
+      debugShowCheckedModeBanner: false,
+    );
+  }
 }
 
 // ignore: must_be_immutable
@@ -28,6 +39,13 @@ class LifeAppWidget extends StatelessWidget {
 
   final GlobalKey lifeAppWidgetKey = GlobalKey();
   final GlobalKey gestureDetectorKey = GlobalKey();
+  final GlobalKey rowSpinnerKey = GlobalKey();
+
+  TextStyle buttonTextStyle = const TextStyle(
+    color: Colors.lightBlueAccent,
+    fontSize: 16,
+    fontWeight: FontWeight.normal,
+  );
 
   LifeAppWidget({required Key key}) : super(key: key) {
     lifeGridPainter = LifeGridPainter();
@@ -52,7 +70,9 @@ class LifeAppWidget extends StatelessWidget {
           var rec = localPositionToCellID(
               details.localPosition, gestureDetectorKey.currentContext!.size);
 
-          gridWidgetState!.updateCell(rec.$1, rec.$2);
+          if (gridWidgetState!.updateCell(rec.$1, rec.$2)) {
+            laState.cellsSet = true;
+          }
         },
         child: CustomPaint(painter: lifeGridPainter));
     gridWidgetState = GridWidgetState(lifeGridPainter!, gestureDetector!);
@@ -91,10 +111,10 @@ class LifeAppWidget extends StatelessWidget {
   int messageCount = 0;
   bool isRunning = false;
 
-  int? rowCount;
-  int? columnCount;
+  int? rowCount = 7;
+  int? columnCount = 7;
 
-  int? generateMilliSec;
+  int? generateMilliSec = 500;
 
   LifeAppState laState = LifeAppState();
   ReceivePort lifeReceivePort = ReceivePort();
@@ -107,148 +127,143 @@ class LifeAppWidget extends StatelessWidget {
     gw!.gridWidgetState!.update(cells);
   }
 
-  Widget buildMaterialApp() {
+  double? screenWidth;
+  double? screenHeight;
+
+  Widget buildMaterialApp(BuildContext context) {
+    screenWidth = MediaQuery.of(context).size.width;
+    screenHeight = MediaQuery.of(context).size.height;
+
     return MaterialApp(
       theme: ThemeData.dark().copyWith(scaffoldBackgroundColor: darkBlue),
       debugShowCheckedModeBanner: false,
       home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Life'),
-        ),
-        body: Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
-            child: Column(
-              children: <Widget>[
-                Expanded(
-                    child: LayoutBuilder(
-                  builder: (_, constraints) => Container(
-                      width: constraints.widthConstraints().maxWidth,
-                      height: constraints.heightConstraints().maxHeight,
-                      color: const Color.fromARGB(255, 218, 238, 195),
-                      child: gw),
-                )),
-                SizedBox(
-                    height: 150,
-                    //  width: 600 ,
-                    child: GridView.count(
-                        physics: const NeverScrollableScrollPhysics(),
-                        shrinkWrap: false,
-                        primary: true,
-                        childAspectRatio: 4,
-                        padding: const EdgeInsets.all(2),
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 5,
-                        crossAxisCount: 6,
-                        children: <Widget>[
-                          TextField(
-                              style: const TextStyle(color: Colors.black),
-                              decoration: const InputDecoration(
-                                  labelText: "Enter rows"),
-                              keyboardType: TextInputType.number,
-                              inputFormatters: <TextInputFormatter>[
-                                FilteringTextInputFormatter.digitsOnly
-                              ],
-                              onChanged: (value) {
-                                laState.rowSet = true;
-                                rowCount = int.parse(value);
-                                
-                              }),
-                          TextField(
-                              style: const TextStyle(color: Colors.black),
-                              decoration: const InputDecoration(
-                                  labelText: "Enter columns"),
-                              keyboardType: TextInputType.number,
-                              inputFormatters: <TextInputFormatter>[
-                                FilteringTextInputFormatter.digitsOnly
-                              ],
-                              onChanged: (value) {
-                                laState.columnSet = true;
-                                columnCount = int.parse(value);
-                              }),
-                          TextField(
-                              style: const TextStyle(color: Colors.black),
-                              decoration: const InputDecoration(
-                                  labelText: "Enter delay in millisec"),
-                              keyboardType: TextInputType.number,
-                              inputFormatters: <TextInputFormatter>[
-                                FilteringTextInputFormatter.digitsOnly
-                              ],
-                              onChanged: (value) {
-                                laState.genTimeSet = true;
-                                generateMilliSec = int.parse(value);
-                              }),
-                          SizedBox(
-                              width: 75,
-                              height: 50,
-                              child: ElevatedButton(
-                                style: style,
-                                onPressed: () {
-                                  if (laState.canStart()) {
-                                    laState.isRunning = true;
-                                    withRandomCells = true;
-                                    lifeInterface = Bridge.fromList(
-                                        Life.withList,
-                                        [
-                                          columnCount,
-                                          rowCount,
-                                          generateMilliSec
-                                        ],
-                                        newCellsgenerated,
-                                        kIsWeb ? false : true);
-                                    lifeInterface!
-                                        .callDelegateFromList(["start"]);
-                                  }
-                                },
-                                child: const Text('Start Random'),
-                              )),
-                          SizedBox(
-                              width: 75,
-                              height: 50,
-                              child: ElevatedButton(
-                                style: style,
-                                onPressed: () {
-                                  if (laState.canStart()) {
-                                    if (null == lifeInterface) {
-                                      withRandomCells = false;
-                                      lifeInterface = Bridge.fromList(
-                                          Life.withList,
-                                          [
-                                            lifeGridPainter!.receivedCells,
-                                            generateMilliSec
-                                          ],
-                                          newCellsgenerated,
-                                          kIsWeb ? false : true);
-                                      lifeInterface!
-                                          .callDelegateFromList(["start"]);
-                                      laState.isRunning = true;
-                                    } else {
-                                      lifeInterface!
-                                          .callDelegateFromList(["start"]);
-                                      laState.isRunning = true;
-                                    }
-                                  }
-                                },
-                                child: const Text('Start'),
-                              )),
-                          SizedBox(
-                              width: 75,
-                              height: 50,
-                              child: ElevatedButton(
-                                style: style,
-                                onPressed: () {
-                                  if (laState.isRunning) {
-                                    laState.isRunning = false;
-                                    lifeInterface!
-                                        .callDelegateFromList(["stop"]);
-                                  }
-                                },
-                                child: const Text('Stop'),
-                              )),
-                        ]))
-              ],
-            )),
-      ),
+          appBar: AppBar(
+              title: FittedBox(
+                child: Text("Life"),
+                fit: BoxFit.contain,
+              ),
+              actions: null),
+          body: Column(
+            children: <Widget>[
+              Expanded(
+                  child: LayoutBuilder(
+                builder: (_, constraints) => Container(
+                    width: constraints.widthConstraints().maxWidth,
+                    height: constraints.heightConstraints().maxHeight,
+                    //                     color: Colors.black38,
+                    child: gw),
+              )),
+              SizedBox(
+                  height: 240,
+                  //  width: 600 ,
+                  child: GridView.count(
+                      physics: const NeverScrollableScrollPhysics(),
+                      shrinkWrap: false,
+                      primary: true,
+                      childAspectRatio: 5,
+                      padding: const EdgeInsets.all(5),
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      crossAxisCount: 3,
+                      children: <Widget>[
+                        SpinBox(
+                          key: rowSpinnerKey,
+                          textStyle: const TextStyle(color: Colors.blueAccent),
+                          showButtons: true,
+                          min: 5,
+                          max: (screenHeight! - 300) / 25,
+                          value: rowCount!.toDouble(),
+                          decoration: InputDecoration(
+                              labelText: 'Rows'),
+                          onChanged: (value) {
+                            if (laState.appStarted) {
+                              return;
+                            }
+                            rowCount = value.toInt();
+                            gridWidgetState!
+                                .updateBorder(rowCount!, columnCount!);
+                          },
+                        ),
+                        SpinBox(
+                          textStyle: const TextStyle(color: Colors.blueAccent),
+                          showButtons: true,
+                          min: 5,
+                          max: (screenWidth! - 50) / 25,
+                          value: columnCount!.toDouble(),
+                          decoration: InputDecoration(
+                              labelText: 'Columns'),
+                          onChanged: (value) {
+                            if (laState.appStarted) {
+                              return;
+                            }
+                            columnCount = value.toInt();
+                            gridWidgetState!
+                                .updateBorder(rowCount!, columnCount!);
+                          },
+                        ),
+                        SpinBox(
+                          textStyle: const TextStyle(color: Colors.blueAccent),
+                          showButtons: true,
+                          min: 100,
+                          max: 5000,
+                          value: 500,
+                          decoration: InputDecoration(
+                              labelText: 'Generate Milli Sec'),
+                          onChanged: (value) {
+                            if (laState.appStarted) {
+                              return;
+                            }
+                            generateMilliSec = value.toInt();
+                          },
+                        ),
+                        SizedBox(
+                            width: 75,
+                            height: 50,
+                            child: ElevatedButton(
+                              style: style,
+                              onPressed: () {
+                                if (!laState.appStarted) {
+                                  laState.isRunning = true;
+                                  laState.cellsSet = true;
+                                  withRandomCells = true;
+                                  lifeInterface = Bridge.fromList(
+                                      Life.withList,
+                                      [columnCount, rowCount, generateMilliSec],
+                                      newCellsgenerated,
+                                      kIsWeb ? false : true);
+                                  lifeInterface!
+                                      .callDelegateFromList(["start"]);
+                                  laState.appStarted = true;
+                                }
+                              },
+                              child:
+                                  Text('Start Random', style: buttonTextStyle),
+                            )),
+                        SizedBox(
+                            width: 75,
+                            height: 50,
+                            child: ElevatedButton(
+                              style: style,
+                              onPressed: () => showWithSelectedCells(context),
+                              child: Text('Start', style: buttonTextStyle),
+                            )),
+                        SizedBox(
+                            width: 75,
+                            height: 50,
+                            child: ElevatedButton(
+                              style: style,
+                              onPressed: () {
+                                if (laState.isRunning) {
+                                  laState.isRunning = false;
+                                  lifeInterface!.callDelegateFromList(["stop"]);
+                                }
+                              },
+                              child: Text('Stop', style: buttonTextStyle),
+                            )),
+                      ]))
+            ],
+          )),
     );
   }
 
@@ -269,15 +284,57 @@ class LifeAppWidget extends StatelessWidget {
         },
         child: CustomPaint(painter: lifeGridPainter));
 
-    final ButtonStyle style = ElevatedButton.styleFrom(
-        textStyle: const TextStyle(fontSize: 10),
-        shape: const LinearBorder(
-          side: BorderSide(color: Colors.blue),
-          bottom: LinearBorderEdge(),
-        ),
-        fixedSize: const Size(60, 25));
+    Widget w = buildMaterialApp(context);
+    this.gridWidgetState!.updateBorder(rowCount!, columnCount!);
+    return w;
+  }
 
-    return buildMaterialApp();
+  void showWithSelectedCells(BuildContext context) {
+    if (laState.canStart()) {
+      if (null == lifeInterface) {
+        withRandomCells = false;
+        lifeInterface = Bridge.fromList(
+            Life.withList,
+            [lifeGridPainter!.receivedCells, generateMilliSec],
+            newCellsgenerated,
+            kIsWeb ? false : true);
+        lifeInterface!.callDelegateFromList(["start"]);
+        laState.isRunning = true;
+        laState.appStarted = true;
+      } else {
+        lifeInterface!.callDelegateFromList(["start"]);
+        laState.isRunning = true;
+      }
+    } else if (laState.isRunning) {
+      return;
+    } else {
+      _dialogBuilder(context);
+    }
+  }
+
+  Future<void> _dialogBuilder(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('No living cells'),
+          content: const Text(
+            'Please double tap in canvas area to toggle cells.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              style: TextButton.styleFrom(
+                textStyle: Theme.of(context).textTheme.labelLarge,
+              ),
+              child: const Text('OK'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -314,19 +371,27 @@ class GridWidgetState extends State<StatefulWidget> {
     lifeGridPainter.notifyListeners();
   }
 
-  void updateCell(int i, int j) {
+  void updateBorder(int row, int col) {
+    log.i("updateBorder called");
+    lifeGridPainter.currentRows = row;
+    lifeGridPainter.currentColumns = col;
+    lifeGridPainter.notifyListeners();
+  }
+
+  bool updateCell(int i, int j) {
     log.d("updateCell called");
     if (i < 0 || i >= lifeGridPainter.receivedCells!.length) {
-      return;
+      return false;
     }
     if (j < 0 || j >= lifeGridPainter.receivedCells![0].length) {
-      return;
+      return false;
     }
     lifeGridPainter.receivedCells![i][j] =
         !lifeGridPainter.receivedCells![i][j];
 
     log.d("updateCell called");
     lifeGridPainter.notifyListeners();
+    return true;
   }
 
   @override
@@ -336,9 +401,25 @@ class GridWidgetState extends State<StatefulWidget> {
 }
 
 class LifeGridPainter extends ChangeNotifier implements CustomPainter {
-   final log = Logger();
+  final log = Logger();
   LifeGridPainter() {
     receivedCells = List.empty(growable: true);
+  }
+
+  int? _currentRows;
+
+  int? get currentRows => _currentRows;
+
+  set currentRows(int? value) {
+    _currentRows = value;
+  }
+
+  int? _currentColumns;
+
+  int? get currentColumns => _currentColumns;
+
+  set currentColumns(int? value) {
+    _currentColumns = value;
   }
 
   late List<List<bool>>? receivedCells;
@@ -350,16 +431,27 @@ class LifeGridPainter extends ChangeNotifier implements CustomPainter {
     final paint = Paint()
       ..style = PaintingStyle.fill
       ..strokeWidth = 4.0
-      ..color = Colors.indigo;
+      ..color = Colors.greenAccent;
 
     final paintDead = Paint()
       ..style = PaintingStyle.fill
       ..strokeWidth = 4.0
-      ..color = Colors.black26;
+      ..color = Color.fromRGBO(8, 18, 8, 4);
 
     const double rSize = 25.0;
 
     if (receivedCells == null || receivedCells!.isEmpty) {
+      if (null == currentRows || null == currentColumns) {
+        return;
+      }
+      double xStart = (size.width - rSize * currentColumns!) / 2;
+      double yStart = (size.height - rSize * currentRows!) / 2;
+
+      canvas.drawRect(
+        Rect.fromLTWH(xStart, yStart, rSize * currentColumns!.toDouble(),
+            rSize * currentRows!.toDouble()),
+        paintDead,
+      );
       return;
     }
 

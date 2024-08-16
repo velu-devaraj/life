@@ -23,10 +23,17 @@ class Life {
   }
 
   factory Life.withList(List list) {
-    if (list.length == 3 && list[0] is List<List<bool>> && list[1] is int && list[2] is NewCells<List<List<bool>>>) {
-      return Life.withRecord( (list[0], list[1], list[2]));
-    } else if (list.length == 4 && list[0] is int && list[1] is int && list[2] is int  && list[3] is NewCells<List<List<bool>>>){
-       return Life.withRecord( (list[0], list[1], list[2], list[3]));
+    if (list.length == 3 &&
+        list[0] is List<List<bool>> &&
+        list[1] is int &&
+        list[2] is NewCells<List<List<bool>>>) {
+      return Life.withRecord((list[0], list[1], list[2]));
+    } else if (list.length == 4 &&
+        list[0] is int &&
+        list[1] is int &&
+        list[2] is int &&
+        list[3] is NewCells<List<List<bool>>>) {
+      return Life.withRecord((list[0], list[1], list[2], list[3]));
     }
     throw Exception("Invalid Record in Life Constructor");
   }
@@ -133,6 +140,10 @@ class Life {
     });
 
     return lTimer;
+  }
+
+  void initializeCells(List<List<bool>> newCells) {
+    cells = newCells;
   }
 
   void stop() {
